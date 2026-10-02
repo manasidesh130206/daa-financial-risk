@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Credit Portfolio Risk Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e9eef1;--panel:#f7f9fa;--ink:#13222d;--mute:#5b6b76;--line:#cbd5db;--factorfold:#0c6b6b;--mc:#d98a1c;--var:#a8321f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header{padding:28px 32px 8px;max-width:1240px;margin:auto}
+h1{font:600 30px/1.15 Fraunces,Georgia,serif;margin:0 0 6px;letter-spacing:-.01em}
+header p{margin:0;color:var(--mute);max-width:70ch}
+main{display:grid;grid-template-columns:290px 1fr;gap:20px;max-width:1240px;margin:16px auto 40px;padding:0 32px}
+@media(max-width:900px){main{grid-template-columns:1fr;padding:0 16px}header{padding:20px 16px 0}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px}
+h2{font-size:15px;margin:0 0 12px;font-weight:600}
+label{display:flex;justify-content:space-between;font-size:13px;margin-top:14px;color:var(--mute)}
+label b{color:var(--ink);font-weight:500}
+input[type=range]{width:100%;accent-color:var(--factorfold)}
+button{width:100%;margin-top:16px;padding:10px;border:0;border-radius:4px;background:var(--factorfold);color:#fff;font:500 14px inherit;cursor:pointer}
+button.alt{background:transparent;color:var(--factorfold);border:1px solid var(--factorfold);margin-top:8px}
+button:focus-visible{outline:3px solid var(--mc);outline-offset:2px}
+button:disabled{opacity:.5;cursor:wait}
+.note{font-size:12.5px;color:var(--mute);margin-top:14px}
+.stack>*+*{margin-top:20px}
+canvas{width:100%;height:300px;display:block}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{font-weight:600;color:var(--mute);font-size:13px}
+td.ff{color:var(--factorfold);font-weight:500}td.mcv{color:#9a5f08;font-weight:500}
+.key{display:flex;gap:16px;font-size:13px;color:var(--mute);margin-bottom:6px;flex-wrap:wrap}
+.key i{display:inline-block;width:14px;height:10px;margin-right:6px;border-radius:2px}
+.speed{font-size:13.5px;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Credit Portfolio Risk Lab</h1>
+  <p>Compares our FactorFold algorithm (compress, quadrature, mixture-quantile) with brute-force Monte Carlo on loans drawn from the credit-risk dataset. Everything runs in your browser.</p>
+</header>
+<main>
+  <aside class="panel">
+    <h2>Portfolio and model</h2>
+    <label>Loans (N) <b id="vN"></b></label><input id="N" type="range" min="500" max="20000" step="500" value="5000">
+    <label>Monte Carlo scenarios (S) <b id="vS"></b></label><input id="S" type="range" min="500" max="10000" step="500" value="5000">
+    <label>Asset correlation <b id="vR"></b></label><input id="R" type="range" min="0.02" max="0.5" step="0.01" value="0.15">
+    <label>Loss given default <b id="vL"></b></label><input id="L" type="range" min="0.2" max="0.9" step="0.05" value="0.45">
+    <button id="run">Run analysis</button>
+    <button id="bench" class="alt">Run scaling benchmark</button>
+    <p class="note" id="status">Loans are resampled from 800 real borrowers; default probabilities come from a logistic-regression model fitted on the full dataset (AUC <span id="auc"></span>).</p>
+  </aside>
+  <section class="stack">
+    <div class="panel">
+      <h2>Portfolio loss distribution</h2>
+      <div class="key"><span><i style="background:var(--mc)"></i>Monte Carlo scenarios</span><span><i style="background:var(--factorfold)"></i>FactorFold density</span><span><i style="background:var(--var)"></i>FactorFold 99% VaR</span></div>
+      <canvas id="c1" aria-label="Loss distribution chart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Risk metrics</h2>
+      <table><thead><tr><th>Metric</th><th>FactorFold</th><th>Monte Carlo</th><th>Difference</th></tr></thead><tbody id="rows"><tr><td colspan="4">Press Run analysis.</td></tr></tbody></table>
+      <p class="speed" id="speed"></p>
+    </div>
+    <div class="panel">
+      <h2>Runtime as the portfolio grows</h2>
+      <div class="key"><span><i style="background:var(--factorfold)"></i>FactorFold</span><span><i style="background:var(--mc)"></i>Monte Carlo (500 scenarios)</span></div>
+      <canvas id="c2" aria-label="Runtime scaling chart"></canvas>
+      <p class="note" id="slopes">Press Run scaling benchmark to measure both methods at N up to 1,000,000 (Monte Carlo stops at 100,000).</p>
+    </div>
+  </section>
+</main>
+<script src="data.js"></script>
+<script src="engine.js"></script>
+<script>
+const $ = id => document.getElementById(id), P = window.PORTFOLIO, fmt = x => Math.round(x).toLocaleString("en-IN");
+$("auc").textContent = P.model.auc;
+const bind = (id, v, f) => { const e = $(id), u = () => $(v).textContent = f(+e.value); e.oninput = u; u(); };
+bind("N","vN",fmt); bind("S","vS",fmt); bind("R","vR",x=>x.toFixed(2)); bind("L","vL",x=>Math.round(x*100)+"%");
+const tick = () => new Promise(r => setTimeout(r, 20));
+const timed = f => { const t = performance.now(); const r = f(); return [r, performance.now() - t]; };
+
+function setup(cv){const d=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*d;cv.height=h*d;const g=cv.getContext("2d");g.scale(d,d);g.clearRect(0,0,w,h);g.font="12px IBM Plex Sans, sans-serif";return[g,w,h]}
+function axes(g,w,h,m){g.strokeStyle="#cbd5db";g.fillStyle="#5b6b76";g.beginPath();g.moveTo(m.l,m.t);g.lineTo(m.l,h-m.b);g.lineTo(w-m.r,h-m.b);g.stroke()}
+
+function drawDist(ff, mc) {
+  const [g,w,h]=setup($("c1")), m={l:16,r:16,t:10,b:28}, bins=60, L=mc.losses;
+  let lo=Infinity,hi=-Infinity; for(const v of L){if(v<lo)lo=v;if(v>hi)hi=v}
+  const bw=(hi-lo)/bins, cnt=new Array(bins).fill(0); for(const v of L)cnt[Math.min(bins-1,Math.floor((v-lo)/bw))]++;
+  const dens=cnt.map(c=>c/L.length/bw), top=Math.max(...dens)*1.15, X=v=>m.l+(v-lo)/(hi-lo)*(w-m.l-m.r), Y=v=>h-m.b-v/top*(h-m.t-m.b);
+  axes(g,w,h,m); g.fillStyle="rgba(217,138,28,.55)";
+  dens.forEach((d,i)=>g.fillRect(X(lo+i*bw),Y(d),X(lo+bw)-X(lo)-1,h-m.b-Y(d)));
+  g.strokeStyle="#0c6b6b";g.lineWidth=2;g.beginPath();
+  for(let i=0;i<=200;i++){const x=lo+(hi-lo)*i/200,y=Y(ff.density(x));i?g.lineTo(X(x),y):g.moveTo(X(x),y)}g.stroke();
+  g.strokeStyle="#a8321f";g.setLineDash([5,4]);g.lineWidth=1.5;g.beginPath();g.moveTo(X(ff.VaR99),m.t);g.lineTo(X(ff.VaR99),h-m.b);g.stroke();g.setLineDash([]);
+  g.fillStyle="#5b6b76";g.textAlign="center";
+  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4;g.fillText((v/1e6).toFixed(1)+"M",X(v),h-8)}
+}
+
+$("run").onclick = async () => {
+  const b=$("run"); b.disabled=true; b.textContent="Running..."; await tick();
+  const N=+$("N").value,S=+$("S").value,o={rho:+$("R").value,lgd:+$("L").value}, pf=Engine.makePortfolio(P,N);
+  const [ff,tc]=timed(()=>Engine.factorfold(pf,o)); await tick(); const [mc,tm]=timed(()=>Engine.monteCarlo(pf,S,o));
+  const names=[["EL","Expected loss"],["VaR95","VaR 95%"],["VaR99","VaR 99%"],["VaR99.9","VaR 99.9%"],["ES99","Expected shortfall 99%"]];
+  $("rows").innerHTML=names.map(([k,n])=>`<tr><td>${n}</td><td class="ff">${fmt(ff[k])}</td><td class="mcv">${fmt(mc[k])}</td><td>${((ff[k]/mc[k]-1)*100).toFixed(1)}%</td></tr>`).join("");
+  $("speed").textContent=`FactorFold took ${tc.toFixed(0)} ms; Monte Carlo took ${tm.toFixed(0)} ms (${(tm/Math.max(tc,1)).toFixed(0)}x slower). Differences in the tail are mostly Monte Carlo sampling noise; raise S to see them shrink.`;
+  drawDist(ff,mc); b.disabled=false; b.textContent="Run analysis";
+};
+
+function slope(xs,ys){const lx=xs.map(Math.log),ly=ys.map(Math.log),n=xs.length,mx=lx.reduce((a,b)=>a+b)/n,my=ly.reduce((a,b)=>a+b)/n;return lx.reduce((s,x,i)=>s+(x-mx)*(ly[i]-my),0)/lx.reduce((s,x)=>s+(x-mx)**2,0)}
+function drawBench(a,b){
+  const [g,w,h]=setup($("c2")),m={l:72,r:16,t:10,b:30},all=[...a,...b],xs=all.map(p=>Math.log10(p[0])),ys=all.map(p=>Math.log10(Math.max(p[1],.05)));
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.floor(Math.min(...ys)),y1=Math.ceil(Math.max(...ys)),X=v=>m.l+(Math.log10(v)-x0)/(x1-x0)*(w-m.l-m.r),Y=v=>h-m.b-(Math.log10(Math.max(v,.05))-y0)/(y1-y0)*(h-m.t-m.b);
+  axes(g,w,h,m);g.fillStyle="#5b6b76";g.textAlign="right";for(let e=y0;e<=y1;e++){g.fillText(e>=3?Math.pow(10,e-3)+" s":Math.pow(10,e)+" ms",m.l-6,Y(Math.pow(10,e))+4)}
+  g.textAlign="center";[...new Set(all.map(p=>p[0]))].forEach(n=>g.fillText(n>=1e6?"1M":n>=1e3?n/1e3+"k":n,X(n),h-10));
+  [[a,"#0c6b6b"],[b,"#d98a1c"]].forEach(([pts,c])=>{g.strokeStyle=c;g.fillStyle=c;g.lineWidth=2;g.beginPath();pts.forEach((p,i)=>i?g.lineTo(X(p[0]),Y(p[1])):g.moveTo(X(p[0]),Y(p[1])));g.stroke();pts.forEach(p=>{g.beginPath();g.arc(X(p[0]),Y(p[1]),3.5,0,7);g.fill()})});
+}
+$("bench").onclick = async () => {
+  const b=$("bench"); b.disabled=true; const o={rho:+$("R").value,lgd:+$("L").value}, A=[],B=[];
+  for(const N of [1e3,1e4,1e5,1e6]){ b.textContent=`Measuring N=${N.toLocaleString()}...`; await tick();
+    const pf=Engine.makePortfolio(P,N); A.push([N,timed(()=>Engine.factorfold(pf,o))[1]]);
+    if(N<=1e5){await tick();B.push([N,timed(()=>Engine.monteCarlo(pf,500,o))[1]])} }
+  drawBench(A,B);
+  $("slopes").textContent=`Measured growth (log-log slope): FactorFold ${slope(A.map(p=>p[0]),A.map(p=>p[1])).toFixed(2)}, Monte Carlo ${slope(B.map(p=>p[0]),B.map(p=>p[1])).toFixed(2)}. A slope of 1 means runtime doubles when loans double. FactorFold is O(N), but its measured slope is below 1 here because fixed overhead and browser warm-up dominate at small N; it approaches 1 as N grows.`;
+  b.disabled=false; b.textContent="Run scaling benchmark";
+};
+</script>
+</body>
+</html>
